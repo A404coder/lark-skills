@@ -14,6 +14,25 @@ SPEC.loader.exec_module(MODULE)
 MESSAGE_ID = 'om_x' + '1' * 31
 
 
+class LarkProfileTest(unittest.TestCase):
+    def test_explicit_profile_applies_to_reads_and_writes(self):
+        with patch.dict(MODULE.os.environ, {'LARK_CLI_PROFILE': 'test-app'}, clear=True), \
+                patch.object(MODULE, 'run', return_value='{"ok": true}') as run:
+            MODULE.lark('docs', '+fetch', '--doc', 'test-doc')
+            MODULE.lark('im', '+messages-send', '--user-id', 'test-user')
+        for call in run.call_args_list:
+            argv = call.args[0]
+            self.assertEqual(argv[:3], ['lark-cli', '--profile', 'test-app'])
+            self.assertEqual(argv[-4:], ['--as', 'bot', '--format', 'json'])
+
+    def test_unconfigured_profile_keeps_cli_default(self):
+        for env in ({}, {'LARK_CLI_PROFILE': ''}):
+            with self.subTest(env=env), patch.dict(MODULE.os.environ, env, clear=True), \
+                    patch.object(MODULE, 'run', return_value='{"ok": true}') as run:
+                MODULE.lark('docs', '+fetch', '--doc', 'test-doc')
+                self.assertNotIn('--profile', run.call_args.args[0])
+
+
 class DeliveryTest(unittest.TestCase):
     def test_archive_search_attribute_is_not_delivery_proof(self):
         self.assertFalse(MODULE.document_has_marker('<fragment keyword="daily-test"><p>daily-other</p></fragment>', 'daily-test'))
