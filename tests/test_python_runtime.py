@@ -24,6 +24,7 @@ class PythonRuntimeTest(unittest.TestCase):
             'skills/progress-report/scripts/run_daily_report.py',
             'skills/progress-report/scripts/collect_progress.py',
             'skills/progress-report/scripts/progress_accounting.py',
+            'skills/progress-report/scripts/daily_report_card.py',
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
