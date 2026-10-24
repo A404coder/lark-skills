@@ -209,7 +209,7 @@ def process(folder, config, state, deliver_only=False, collect_only=False, prepa
     raw = json.loads((folder / 'raw.json').read_text())
     if (raw['since'], raw['until']) != (state['since'], state['until']):
         raise ValueError('Cached data window differs from this run')
-    if raw.get('accounting_version') != 2 and not state.get('messages'):
+    if raw.get('accounting_version') != 2 and not delivery_started(state):
         if deliver_only:
             raise ValueError('Old unsent report must be recalculated before delivery')
         provider = GitEvidence(ROOT / '.state/progress-evidence', config.get('report', {}).get('local_git_root'))

@@ -64,3 +64,20 @@ class ReportRegressionTest(unittest.TestCase):
         self.assertNotIn('email', fact)
         self.assertIn(commit['title'], render_evidence(raw))
         self.assertIn(commit['url'], render_evidence(raw))
+
+    def test_legacy_ambiguous_send_is_not_recalculated_before_recovery(self):
+        raw = {'since': '2026-01-01T13:00:00Z', 'until': '2026-01-02T13:00:00Z',
+               'stats': {'active_member_count': 0, 'commit_count': 0, 'active_pr_count': 0, 'by_member': {}}}
+        body = '过去 24 小时团队 0 人活跃，共 0 次提交、0 个活跃 PR'
+        state = {'since': raw['since'], 'until': raw['until'], 'delivery_fingerprint': 'original',
+                 'send_attempted_at': {'ou_test': 1}}
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / 'raw.json').write_text(json.dumps(raw))
+            (folder / 'body.md').write_text(body)
+            (folder / 'report.md').write_text('original facts')
+            with patch.object(report, 'enrich') as enrichment, patch.object(report, 'deliver') as delivery:
+                report.process(folder, {}, state)
+                enrichment.assert_not_called()
+                delivery.assert_called_once_with(folder, {}, state)
+            self.assertEqual(json.loads((folder / 'raw.json').read_text()), raw)

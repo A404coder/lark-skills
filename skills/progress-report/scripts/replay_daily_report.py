@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 def supplement_descriptions(raw, token):
     cache_root = ROOT / '.state/progress-pr-context'
     def read(pr):
+        if pr.get('body'):
+            return pr
         path = cache_root / pr['repo'] / (str(pr['number']) + '.json')
         if not path.exists():
             data = github_get(token, f"/repos/{pr['repo']}/issues/{pr['number']}", paginate=False)
@@ -41,6 +43,12 @@ def main():
     provider = GitEvidence(ROOT / '.state/progress-evidence', cfg.get('local_git_root'))
     snapshots = [(json.loads(p.read_text()), p) for p in args.snapshots]
     snapshots.sort(key=lambda x: x[0]['since'])
+    destinations = [(args.output_dir / path.parent.name).resolve() for _, path in snapshots]
+    if len(set(destinations)) != len(destinations):
+        raise ValueError('Multiple snapshots would write to the same output directory')
+    for folder in destinations:
+        if folder.exists() and any(folder.iterdir()):
+            raise FileExistsError(f'Replay needs a new or empty output directory: {folder}')
     outputs = []
     for source, path in snapshots:
         folder = args.output_dir / path.parent.name
