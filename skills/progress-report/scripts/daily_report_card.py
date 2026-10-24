@@ -1,4 +1,4 @@
-"""Render the approved daily-report layout; activity numbers come from raw stats."""
+"""Render the daily-report layout; activity numbers come from raw stats."""
 from datetime import datetime, timedelta, timezone
 import html
 import re

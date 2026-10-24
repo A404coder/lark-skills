@@ -711,7 +711,7 @@ def main():
 
     cfg = load_config(Path(args.config))
     report_cfg = cfg.get("report", {})
-    excluded = set(report_cfg.get("excluded_repos", ["momentstream/gitops"]))
+    excluded = set(report_cfg.get("excluded_repos", []))
     repos = [r for r in (cfg.get("github", {}).get("repos") or []) if r and r not in excluded]
     if not repos:
         raise SystemExit("No github.repos configured.")

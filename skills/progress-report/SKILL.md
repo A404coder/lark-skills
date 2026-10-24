@@ -17,7 +17,7 @@ description: Generate a plain-language, decision-oriented engineering progress u
 
 ## 定时日报卡片
 
-定时入口采用已确认的 Card 2.0：蓝色标题，日期与截至时间放在标题区，正文分为今日重点、默认展开的成员进展和可选需关注。每位活跃成员写 1–3 条「事项｜状态：数据、进展与下一步」，零活动成员由程序合并一行。程序从 raw.stats 添加个人 PR 状态数；日报不重复统计窗口、历史快照、gitops 排除和去重方法等固定说明。细节通过事项 PR 链接追溯。
+定时入口采用Card 2.0：蓝色标题，日期与截至时间放在标题区，正文分为今日重点、默认展开的成员进展和可选需关注。每位活跃成员写 1–3 条「事项｜状态：数据、进展与下一步」，零活动成员由程序合并一行。程序从 raw.stats 添加个人 PR 状态数；日报不重复统计窗口、历史快照、仓库排除和去重方法等固定说明。细节通过事项 PR 链接追溯。
 
 固定布局由 `scripts/daily_report_card.py` 生成，Agent 只写正文。`--prepare-only` 同时生成 card.json 供核对；失败重试绑定消息格式、身份和内容摘要。升级前已开始投递的 Markdown 日报按原格式恢复，不为换卡片重复发送。飞书文档继续留存可阅读的 Markdown 正文。
 
@@ -112,7 +112,7 @@ PR 模式：
 - PR 的 `updated_at` 只用于发现候选；最终只保留窗口内新开、推入 commit、评审/评论、状态推进、关闭或合并的活跃 PR，忽略 `head_ref_deleted` 等维护事件
 - 活跃 PR 的提交从 GitHub PR commits 读取，因此 squash merge 或删除源分支后仍保留原始提交；先按 SHA 汇集活动证据，并排除已由原始提交代表的 synthetic squash/merge commit；随后读取完整 Git diff，以仓库和 保留空白的 patch-id（避免误合并空白敏感代码） 去重，普通合并提交单列，跨日重复关联先前已审计快照。作者时间早于窗口的改动单列为历史活动，不当成当天新编写，也不据此断言重复劳动
 - 默认扫描所有现存分支（`report.include_all_branches: true`）：GraphQL 按仓库每页 30 个分支批量读取窗口内提交；分支和提交均完整分页，不再受旧 `max_branches_per_repo` 限制。PR 原始提交及活动证据继续使用 REST，列表分页遇到窗口外日期立即停止。默认 3 个仓库 / 4 个 PR 并发，单请求支持超时、截断响应和暂时性服务错误重试。可用 `--cache-dir` 复用相同窗口的成功采集结果；任何仓库失败都会明确报错，不把缺失数据写成零活动。
-- 默认排除 `momentstream/gitops`；`report.excluded_repos` 明确控制排除列表。`report.local_git_root` 可复用本机仓库只读对象，缺失 SHA 仅 fetch 对象；否则使用 `.state/progress-evidence` 内的 bare 仓库。完整 diff 获取失败即停止，不能退回 SHA 数冒充去重结果。
+- 通过 `report.excluded_repos` 配置排除列表，默认不排除仓库。`report.local_git_root` 可复用本机仓库只读对象，缺失 SHA 仅 fetch 对象；否则使用 `.state/progress-evidence` 内的 bare 仓库。完整 diff 获取失败即停止，不能退回 SHA 数冒充去重结果。
 - `raw.stats` 是数字唯一来源。分类按文件区分业务代码、测试、CI／构建、文档、运行配置／其他；混合补丁可跨类，不能相加。补丁数仅用于审计，不代表功能或工作量，语义改写、拆分及未关联 squash 不承诺自动判重。
 - PR 分开统计窗口内新建、合入 main/master、合入开发分支、关闭未合并，以及采集快照中本期活跃且仍开放的 PR。新建与合并可重叠；进行中不是全仓 backlog。窗口使用左开右闭，避免整点跨日重复。
 - `raw.groups` 按真实堆叠分支连接提供事项归组证据；结合明确 Issue 关联和描述归并同一事项，不凭相似标题强行合并。先写事项、目的、交付状态、待确认。统计分类和去重审计仅保存到本地 statistics.md，卡片的个人 PR 状态数据由程序生成。正文不以提交数或 PR 总数开头，不按数量排名成员。

@@ -18,7 +18,7 @@ team:
   gitlab_to_github: {}
 
 report:
-  excluded_repos: ["momentstream/gitops"]
+  excluded_repos: []
   default_days: 7
   include_all_branches: true
   include_open_prs: true

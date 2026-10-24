@@ -167,7 +167,7 @@ def group_prs(prs):
     return sorted(result, key=lambda g: (-len(g['prs']), g['title']))
 
 
-def enrich(raw, provider, prior=None, excluded=('momentstream/gitops',)):
+def enrich(raw, provider, prior=None, excluded=()):
     raw = dict(raw)
     raw['previous_stats'] = raw.get('stats', {})
     raw['repos'] = [r for r in raw['repos'] if r not in excluded]

@@ -49,7 +49,7 @@ def main():
         if args.with_current_descriptions:
             supplement_descriptions(source, gh_token(config))
         prior = prior_patches(outputs, source['since'])
-        raw = enrich(source, provider, prior, cfg.get('excluded_repos', ['momentstream/gitops']))
+        raw = enrich(source, provider, prior, cfg.get('excluded_repos', []))
         raw['replay_source'] = str(path.resolve())
         raw['prior_windows'] = [str(p) for p in outputs]
         output = folder / 'raw.json'

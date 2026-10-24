@@ -65,16 +65,16 @@ class AccountingTest(unittest.TestCase):
 
     def test_exclusion_and_duplicate_diagnostics_apply_to_every_member(self):
         commits = [dict(repo=repo, sha=sha, member=member, timestamp='2026-10-24T00:00:00Z')
-                   for repo, sha, member in [('momentstream/gitops', 'a', 'one'), ('o/r', 'b', 'one'), ('o/r', 'c', 'two')]]
+                   for repo, sha, member in [('example/excluded-repo', 'a', 'one'), ('o/r', 'b', 'one'), ('o/r', 'c', 'two')]]
         raw = dict(since='2026-10-23T13:00:00Z', until='2026-10-24T13:00:00Z',
-                   repos=['momentstream/gitops', 'o/r'], commits=commits, prs=[],
+                   repos=['example/excluded-repo', 'o/r'], commits=commits, prs=[],
                    members={m: dict(display_name=m, aliases=[m]) for m in ['one', 'two']})
         calls = []
         def provider(c):
             calls.append(c['repo'])
             return dict(patch_id='same', authored_at='2026-10-24T00:00:00Z', parents=['p'], categories=['tests'])
-        result = enrich(raw, provider)
-        self.assertNotIn('momentstream/gitops', calls)
+        result = enrich(raw, provider, excluded=["example/excluded-repo"])
+        self.assertNotIn('example/excluded-repo', calls)
         self.assertEqual(result['stats']['patch_count'], 1)
         self.assertEqual(result['stats']['by_member']['two']['audit_statuses'], {'duplicate': 1})
         self.assertIn('测试', statistics_markdown(result))
