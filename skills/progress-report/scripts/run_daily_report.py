@@ -51,7 +51,9 @@ def run(argv, *, cwd=ROOT, timeout=180, log=None):
 
 
 def lark(*args, cwd=ROOT):
-    raw = run([os.environ.get('LARK_CLI_BIN', 'lark-cli'), *args, '--as', 'bot', '--format', 'json'], cwd=cwd)
+    profile = os.environ.get('LARK_CLI_PROFILE')
+    profile_args = ['--profile', profile] if profile else []
+    raw = run([os.environ.get('LARK_CLI_BIN', 'lark-cli'), *profile_args, *args, '--as', 'bot', '--format', 'json'], cwd=cwd)
     value = json.loads(raw)
     if value.get('ok') is not True:
         raise RuntimeError(f'Lark did not return ok=true: {value}')
