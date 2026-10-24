@@ -85,6 +85,42 @@ class DeliveryTest(unittest.TestCase):
                     MODULE.deliver(folder, cfg, state)
 
 
+class AccountingNarrativeTest(unittest.TestCase):
+    def test_prepare_generates_statistics_in_code_without_delivering(self):
+        from progress_accounting import enrich
+        raw = enrich({'repos': [], 'commits': [], 'prs': [], 'members': {
+            'dev': {'display_name': 'Dev', 'aliases': ['dev']}},
+            'since': '2026-10-23T13:00:00Z', 'until': '2026-10-24T13:00:00Z',
+            'date_range': '2026-10-23 21:00至2026-10-24 21:00'}, lambda c: None)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / 'raw.json').write_text(json.dumps(raw))
+            (folder / 'report.md').write_text('fact sheet')
+            def generate(argv, **kwargs):
+                context = json.loads((folder / 'narrative-context.json').read_text())
+                self.assertNotIn('commits', context)
+                self.assertIn(str(folder / 'narrative-context.json'), argv[-1])
+                (folder / 'narrative.md').write_text('**Dev**\n窗口内未采集到代码或 PR 活动。')
+            with patch.object(MODULE, 'run', side_effect=generate), patch.object(MODULE, 'lark') as lark:
+                MODULE.process(folder, {}, {'since': raw['since'], 'until': raw['until'], 'range': raw['date_range']}, prepare_only=True)
+                lark.assert_not_called()
+            MODULE.validate_body((folder / 'body.md').read_text(), raw)
+
+    def test_new_narrative_uses_grouped_work_and_exact_generated_appendix(self):
+        from progress_accounting import statistics_markdown
+        raw = {'accounting_version': 2, 'stats': {'by_member': {
+            'dev': {'display_name': 'Dev', 'categories': {},
+                    'prs': {'opened': 2, 'merged_main': 0, 'merged_branch': 1, 'ongoing': 1},
+                    'observed_commit_count': 3, 'audit_statuses': {'counted': 1, 'merge': 1, 'duplicate': 1}}}}}
+        body = '**Dev**\n测试治理仍在开发分支。\n\n' + statistics_markdown(raw)
+        MODULE.validate_body(body, raw)
+        with self.assertRaises(ValueError):
+            MODULE.validate_body(body.replace('| 2 | 0 | 1 | 0 | 1 |', '| 20 | 0 | 1 | 0 | 1 |'), raw)
+        with self.assertRaises(ValueError):
+            MODULE.validate_body('共 100 次提交\n' + body, raw)
+
+
+
 class AmbiguousArchiveTest(unittest.TestCase):
     def test_partial_insert_with_lost_response_is_not_inserted_again(self):
         raw = {'stats': {'active_member_count': 0, 'commit_count': 0,

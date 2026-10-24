@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import unittest
 import os
+import sys
 import http.client
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -12,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = (
     REPO_ROOT / "skills" / "progress-report" / "scripts" / "collect_progress.py"
 )
+sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("collect_progress", SCRIPT_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

@@ -23,6 +23,7 @@ class PythonRuntimeTest(unittest.TestCase):
             'scripts/python.sh', 'install.sh', 'launchd/run-daily-team-report.sh',
             'skills/progress-report/scripts/run_daily_report.py',
             'skills/progress-report/scripts/collect_progress.py',
+            'skills/progress-report/scripts/progress_accounting.py',
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)

@@ -104,9 +104,13 @@ PR 模式：
 脚本采集口径：
 
 - PR 的 `updated_at` 只用于发现候选；最终只保留窗口内新开、推入 commit、评审/评论、状态推进、关闭或合并的活跃 PR，忽略 `head_ref_deleted` 等维护事件
-- 活跃 PR 的提交从 GitHub PR commits 读取，因此 squash merge 或删除源分支后仍保留原始提交；按 SHA 全局去重，并排除已由原始提交代表的 synthetic squash/merge commit
+- 活跃 PR 的提交从 GitHub PR commits 读取，因此 squash merge 或删除源分支后仍保留原始提交；先按 SHA 汇集活动证据，并排除已由原始提交代表的 synthetic squash/merge commit；随后读取完整 Git diff，以仓库和 保留空白的 patch-id（避免误合并空白敏感代码） 去重，普通合并提交单列，跨日重复关联先前已审计快照。作者时间早于窗口的改动单列为历史活动，不当成当天新编写，也不据此断言重复劳动
 - 默认扫描所有现存分支（`report.include_all_branches: true`）：GraphQL 按仓库每页 30 个分支批量读取窗口内提交；分支和提交均完整分页，不再受旧 `max_branches_per_repo` 限制。PR 原始提交及活动证据继续使用 REST，列表分页遇到窗口外日期立即停止。默认 3 个仓库 / 4 个 PR 并发，单请求支持超时、截断响应和暂时性服务错误重试。可用 `--cache-dir` 复用相同窗口的成功采集结果；任何仓库失败都会明确报错，不把缺失数据写成零活动。
-- `raw.stats` 是团队与成员数字的唯一事实来源；Agent 不得自行重数或改写人数、提交数和 PR 数
+- 默认排除 `momentstream/gitops`；`report.excluded_repos` 明确控制排除列表。`report.local_git_root` 可复用本机仓库只读对象，缺失 SHA 仅 fetch 对象；否则使用 `.state/progress-evidence` 内的 bare 仓库。完整 diff 获取失败即停止，不能退回 SHA 数冒充去重结果。
+- `raw.stats` 是数字唯一来源。分类按文件区分业务代码、测试、CI／构建、文档、运行配置／其他；混合补丁可跨类，不能相加。补丁数仅用于审计，不代表功能或工作量，语义改写、拆分及未关联 squash 不承诺自动判重。
+- PR 分开统计窗口内新建、合入 main/master、合入开发分支、关闭未合并，以及采集快照中本期活跃且仍开放的 PR。新建与合并可重叠；进行中不是全仓 backlog。窗口使用左开右闭，避免整点跨日重复。
+- `raw.groups` 按真实堆叠分支连接提供事项归组证据；结合明确 Issue 关联和描述归并同一事项，不凭相似标题强行合并。先写事项、目的、交付状态、待确认，再附由程序生成的统计。正文不以提交数或 PR 总数开头，不按数量排名成员。
+- 历史回算使用 `scripts/replay_daily_report.py <原始 raw.json...> --output-dir <独立目录>`，按时间顺序处理，前置基线窗口供跨日去重；不覆盖已发送日报或回执。重算输出记录历史窗口和补丁证据。
 - PR 模式只采集该 PR 的 commits、files 和 PR 状态，不受时间范围限制
 - 只保留能匹配团队成员 GitHub login 或 extra_emails 的提交
 - 报告必须只使用采集到的数据，不能编造
