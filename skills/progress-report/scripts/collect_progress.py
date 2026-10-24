@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from progress_accounting import GitEvidence, enrich, prior_patches, render_evidence
+
 try:
     from ruamel.yaml import YAML
 except ImportError:
@@ -336,7 +338,7 @@ def commit_member(commit: dict, by_alias: dict) -> str | None:
 
 
 def in_window(value: str | None, since: str, until: str) -> bool:
-    return bool(value and since <= value <= until)
+    return bool(value and since < value <= until)
 
 
 def commit_timestamp(commit: dict) -> str:
@@ -370,6 +372,8 @@ def normalize_pr(repo: str, pr: dict) -> dict:
         "repo": repo,
         "number": pr["number"],
         "title": pr.get("title", ""),
+        "body": pr.get("body") or "",
+        "draft": pr.get("draft", False),
         "state": pr.get("state", ""),
         "url": pr.get("html_url", ""),
         "user": ((pr.get("user") or {}).get("login") or "").lower(),
@@ -535,6 +539,9 @@ def build_activity_commit_index(
 def render_report(raw: dict, max_items: int) -> str:
     if raw.get("mode") == "pr":
         return render_pr_report(raw, max_items)
+
+    if raw.get("accounting_version") == 2:
+        return render_evidence(raw)
 
     date_range = raw["date_range"]
     commits = raw["commits"]
@@ -704,7 +711,8 @@ def main():
 
     cfg = load_config(Path(args.config))
     report_cfg = cfg.get("report", {})
-    repos = [r for r in (cfg.get("github", {}).get("repos") or []) if r]
+    excluded = set(report_cfg.get("excluded_repos", []))
+    repos = [r for r in (cfg.get("github", {}).get("repos") or []) if r and r not in excluded]
     if not repos:
         raise SystemExit("No github.repos configured.")
     since, until, date_range = parse_range(args.range, report_cfg.get("default_days", 7))
@@ -745,7 +753,7 @@ def main():
     def collect_repo(repo_full):
         started = time.monotonic()
         print(f"[collect] starting {repo_full}", file=sys.stderr, flush=True)
-        key = ["repo-v2", repo_full, since, until, by_alias, include_all, include_open_prs]
+        key = ["repo-v3", repo_full, since, until, by_alias, include_all, include_open_prs]
         def fetch():
             commits = collect_branch_commits(token, repo_full, since, until, by_alias, include_all)
             prs = recent_pull_requests(token, repo_full, since)
@@ -845,6 +853,11 @@ def main():
             if not item["active"]
         ],
     }
+
+    state_root = Path(__file__).resolve().parents[3] / '.state'
+    evidence = GitEvidence(state_root / 'progress-evidence', report_cfg.get('local_git_root'))
+    prior = prior_patches(state_root.glob('daily-report*/*/raw.json'), since)
+    raw = enrich(raw, evidence, prior, excluded)
 
     Path(args.raw_output).write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
     Path(args.output).write_text(render_report(raw, max_items), encoding="utf-8")

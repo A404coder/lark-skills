@@ -7,13 +7,19 @@ description: Generate a plain-language, decision-oriented engineering progress u
 
 生成一份面向团队同步的工程进度报告：从 GitHub 仓库最近代码改动或指定 PR 采集数据，先形成可追溯事实底稿，再改写成平白、面向决策的同步内容，说明“做了什么 / 为什么这样做 / 对工作流有什么意义 / 还有什么待确认 / 下一步是什么”。根据用户请求或 `output.mode` 决定只本地输出、只发送飞书消息、只创建飞书文档，或创建文档后投递消息。
 
-除按需调用外，本 skill 还承载无人值守的**定时团队日报**：`launchd/com.lark-skills.daily-team-report.plist` 每天 21:00 触发 `launchd/run-daily-team-report.sh`。入口调用 `scripts/run_daily_report.py`，固定统计北京时间前一天 21:00 到当天 21:00（使用机器本地时区），重试不会移动窗口。脚本采集数据，`codex exec` 只改写本地正文，随后脚本校验、以 bot 私发负责人并插入既有 `lark.daily_log_doc` 文档最前。
+除按需调用外，本 skill 还承载无人值守的**定时团队日报**：`launchd/com.lark-skills.daily-team-report.plist` 每天 21:00 触发 `launchd/run-daily-team-report.sh`。入口调用 `scripts/run_daily_report.py`，固定统计北京时间前一天 21:00 到当天 21:00（使用机器本地时区），重试不会移动窗口。脚本采集数据，`codex exec` 只改写本地正文，随后脚本校验、以 user 身份向负责人私发 Card 2.0 卡片，并以 bot 身份插入既有 `lark.daily_log_doc` 文档最前。
 
 运行记录保存在 gitignored 的 `.state/daily-report/<窗口结束时间>/`，包含原始数据、逐仓缓存、正文、发送回执和留档状态。采集失败只重试缺失数据；消息已发但留档失败时只补留档。成功依据是实际 Lark JSON 回执及消息/文档回读，不从 Codex 日志匹配 `om_` 字样。不要删除未完成运行的状态目录。
 
 若出现 `Unconfirmed archive insert`，说明留档请求可能只写入了部分内容，脚本会停止自动插入。先核查目标文档：已写入的内容应补齐并保留该窗口的统计标识，再用 `--deliver-only` 回读确认；只有确认完全没有写入时，才可移除 `state.json` 的 `archive_attempted` 字段后重试。保留消息回执和其他状态，避免重复发送。
 
 补发：`./launchd/run-daily-team-report.sh --range 'YYYY-MM-DD 21:00至YYYY-MM-DD 21:00'`。预览：加 `--prepare-only` 只采集并生成正文，不投递；已准备正文的投递可用 `--deliver-only`。同一窗口重复运行复用状态；历史漏发日期必须显式指定窗口，不能用执行当时的“过去24小时”替代。独立调用本 skill 的时间范围与输出模式仍按下面规则执行。
+
+## 定时日报卡片
+
+定时入口采用Card 2.0：蓝色标题，日期与截至时间放在标题区，正文分为今日重点、默认展开的成员进展和可选需关注。每位活跃成员写 1–3 条「事项｜状态：数据、进展与下一步」，零活动成员由程序合并一行。程序从 raw.stats 添加个人 PR 状态数；日报不重复统计窗口、历史快照、仓库排除和去重方法等固定说明。细节通过事项 PR 链接追溯。
+
+固定布局由 `scripts/daily_report_card.py` 生成，Agent 只写正文。`--prepare-only` 同时生成 card.json 供核对；定时入口只处理当前统计数据并发送卡片；失败重试按内容摘要、发送回执与幂等键恢复。历史重算独立手动运行，输出到新目录，不在定时入口升级旧数据或恢复旧消息格式。飞书文档继续留存可阅读的 Markdown 正文。
 
 ## Prerequisites
 
@@ -104,9 +110,13 @@ PR 模式：
 脚本采集口径：
 
 - PR 的 `updated_at` 只用于发现候选；最终只保留窗口内新开、推入 commit、评审/评论、状态推进、关闭或合并的活跃 PR，忽略 `head_ref_deleted` 等维护事件
-- 活跃 PR 的提交从 GitHub PR commits 读取，因此 squash merge 或删除源分支后仍保留原始提交；按 SHA 全局去重，并排除已由原始提交代表的 synthetic squash/merge commit
+- 活跃 PR 的提交从 GitHub PR commits 读取，因此 squash merge 或删除源分支后仍保留原始提交；先按 SHA 汇集活动证据，并排除已由原始提交代表的 synthetic squash/merge commit；随后读取完整 Git diff，以仓库和 保留空白的 patch-id（避免误合并空白敏感代码） 去重，普通合并提交单列，跨日重复关联先前已审计快照。作者时间早于窗口的改动单列为历史活动，不当成当天新编写，也不据此断言重复劳动
 - 默认扫描所有现存分支（`report.include_all_branches: true`）：GraphQL 按仓库每页 30 个分支批量读取窗口内提交；分支和提交均完整分页，不再受旧 `max_branches_per_repo` 限制。PR 原始提交及活动证据继续使用 REST，列表分页遇到窗口外日期立即停止。默认 3 个仓库 / 4 个 PR 并发，单请求支持超时、截断响应和暂时性服务错误重试。可用 `--cache-dir` 复用相同窗口的成功采集结果；任何仓库失败都会明确报错，不把缺失数据写成零活动。
-- `raw.stats` 是团队与成员数字的唯一事实来源；Agent 不得自行重数或改写人数、提交数和 PR 数
+- 通过 `report.excluded_repos` 配置排除列表，默认不排除仓库。`report.local_git_root` 可复用本机仓库只读对象，缺失 SHA 仅 fetch 对象；否则使用 `.state/progress-evidence` 内的 bare 仓库。完整 diff 获取失败即停止，不能退回 SHA 数冒充去重结果。
+- `raw.stats` 是数字唯一来源。分类按文件区分业务代码、测试、CI／构建、文档、运行配置／其他；混合补丁可跨类，不能相加。补丁数仅用于审计，不代表功能或工作量，语义改写、拆分及未关联 squash 不承诺自动判重。
+- PR 分开统计窗口内新建、合入 main/master、合入开发分支、关闭未合并，以及采集快照中本期活跃且仍开放的 PR。新建与合并可重叠；进行中不是全仓 backlog。窗口使用左开右闭，避免整点跨日重复。
+- `raw.groups` 按真实堆叠分支连接提供事项归组证据；结合明确 Issue 关联和描述归并同一事项，不凭相似标题强行合并。先写事项、目的、交付状态、待确认。统计分类和去重审计仅保存到本地 statistics.md，卡片的个人 PR 状态数据由程序生成。正文不以提交数或 PR 总数开头，不按数量排名成员。
+- 历史回算使用 `scripts/replay_daily_report.py <原始 raw.json...> --output-dir <独立目录>`，按时间顺序处理，前置基线窗口供跨日去重；不覆盖已发送日报或回执。重算输出记录历史窗口和补丁证据。
 - PR 模式只采集该 PR 的 commits、files 和 PR 状态，不受时间范围限制
 - 只保留能匹配团队成员 GitHub login 或 extra_emails 的提交
 - 报告必须只使用采集到的数据，不能编造
@@ -308,7 +318,7 @@ lark-cli im +messages-send --user-id "<open_id>" --markdown "$(cat progress_mess
 5. 0 数据时不要编造，输出“该范围内未匹配到团队成员代码改动”，并建议检查仓库配置、GitHub 用户映射或时间范围。
 6. 默认不要创建飞书文档或发送消息；只有用户明确要求或 `output.mode` 指定时才执行外部写入。
 7. 飞书文档创建后必须自动 transfer owner，并重新授权 bot；权限命令必须带 `--yes`。
-8. 飞书文档和消息投递使用 bot 身份。
+8. 飞书文档和群消息使用 bot 身份；定时日报私聊使用 user 身份。
 9. 群消息面向团队协作，不面向代码审计；把可追溯证据放进文档或本地报告，不要把第一屏写成提交清单。
 10. 群消息的验收标准是「没读过内部文档的人也能看懂」：默认 200 字上下，零内部行话与编号；发送前先给用户 review 一版，用户确认后再投递。
 11. 所有飞书 Markdown 投递前必须通过 `validate_lark_markdown.py`；PR 范围不得使用 ASCII `~`。
