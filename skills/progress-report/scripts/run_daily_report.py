@@ -22,7 +22,7 @@ from xml.etree import ElementTree
 
 from collect_progress import load_config, parse_range
 from daily_report_card import build_card
-from progress_accounting import GitEvidence, enrich, prior_patches, render_evidence, statistics_markdown, narrative_context
+from progress_accounting import VERSION, statistics_markdown, narrative_context
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = Path(__file__).parent
@@ -82,28 +82,13 @@ def document_has_marker(content, marker):
 
 
 def validate_body(body, raw):
-    if raw.get('accounting_version') == 2:
-        if '**统计附表（活动记录，不作产出排名）**' in body and statistics_markdown(raw) not in body:
-            raise ValueError('Missing exact generated statistics appendix')
-        narrative = body.split('**统计附表（活动记录，不作产出排名）**')[0]
-        if re.search(r'\d+\s*(?:次提交|提交\s*/)', narrative):
-            raise ValueError('Narrative must describe grouped work, not headline commit counts')
-        for member in raw['stats']['by_member'].values():
-            if '**' + member['display_name'] + '**' not in narrative:
-                raise ValueError('Missing member narrative: ' + member['display_name'])
-        if '查看日报留档' in body:
-            raise ValueError('Narrative must not include the archive link')
-        return
-    stats = raw['stats']
-    expected = f"过去 24 小时团队 {stats['active_member_count']} 人活跃，共 {stats['commit_count']} 次提交、{stats['active_pr_count']} 个活跃 PR"
-    if not body.startswith(expected):
-        raise ValueError('Narrative total must match raw.stats exactly')
-    for member in stats['by_member'].values():
-        heading = f"**{member['display_name']}**（{member['commit_count']} 提交 / {member['active_pr_count']} PR）"
-        if heading not in body:
-            raise ValueError(f'Missing exact member statistics: {heading}')
+    if raw.get('accounting_version') != VERSION:
+        raise ValueError('Daily delivery requires current accounting data')
+    if re.search(r'\d+\s*(?:次提交|提交\s*/)', body):
+        raise ValueError('Narrative must describe grouped work, not headline commit counts')
     if '查看日报留档' in body:
         raise ValueError('Narrative must not include the archive link')
+    build_card(body, raw)
 
 
 def delivery_started(state):
@@ -118,28 +103,18 @@ def deliver(folder, config, state):
     if archive['url'] in body:
         raise ValueError('Archive must not link to itself')
     marker = state['marker']
-    # A run already prepared under the old renderer must finish with its original
-    # payload and sender, including recovery after an ambiguous send response.
-    if 'message_format' not in state:
-        state['message_format'] = 'card' if raw.get('accounting_version') == 2 and not delivery_started(state) else 'markdown'
-        state['message_identity'] = 'user' if state['message_format'] == 'card' else 'bot'
-    card = build_card(body, raw) if state['message_format'] == 'card' else None
-    fingerprint = hashlib.sha256(json.dumps([body, archive, config['delivery']['targets']], sort_keys=True).encode()).hexdigest()
-    if card is not None:
-        fingerprint = hashlib.sha256(json.dumps([card, body, archive, config['delivery']['targets'], state['message_identity']], sort_keys=True).encode()).hexdigest()
+    card = build_card(body, raw)
+    fingerprint = hashlib.sha256(json.dumps([card, body, archive, config['delivery']['targets'], 'user'], sort_keys=True).encode()).hexdigest()
     if state.get('delivery_fingerprint') not in (None, fingerprint):
         raise RuntimeError('Content or recipients changed after delivery preparation; inspect saved receipts')
-    if card is not None:
-        save(folder / 'card.json', card)
+    save(folder / 'card.json', card)
     state['delivery_fingerprint'] = fingerprint
     save(folder / 'state.json', state)
-    message = body + f"\n\n[查看日报留档]({archive['url']})\n"
     archive_body = f"## {state['date']}\n\n{body}\n\n统计标识：{marker}\n\n---\n"
-    for name, text in [('message.md', message), ('archive.md', archive_body)]:
-        path = folder / name
-        path.write_text(text, encoding='utf-8')
-        for flags in (['--fix'], []):
-            run([sys.executable, str(SCRIPTS / 'validate_lark_markdown.py'), *flags, str(path)])
+    path = folder / 'archive.md'
+    path.write_text(archive_body, encoding='utf-8')
+    for flags in (['--fix'], []):
+        run([sys.executable, str(SCRIPTS / 'validate_lark_markdown.py'), *flags, str(path)])
     receipts = state.setdefault('messages', {})
     for target in config['delivery']['targets']:
         if target['type'] != 'user':
@@ -154,14 +129,14 @@ def deliver(folder, config, state):
                 raise RuntimeError('Unconfirmed send is older than idempotency window; inspect chat before retry')
             state['send_attempted_at'][target_id] = attempted or time.time()
             save(folder / 'state.json', state)
-            payload = ['--msg-type', 'interactive', '--content', json.dumps(card, ensure_ascii=False)] if card is not None else ['--markdown', (folder / 'message.md').read_text()]
             receipt = lark('im', '+messages-send', '--user-id', target_id,
-                           *payload, '--idempotency-key', key, identity=state['message_identity'])
+                           '--msg-type', 'interactive', '--content', json.dumps(card, ensure_ascii=False),
+                           '--idempotency-key', key, identity='user')
             receipts[target_id] = receipt
             save(folder / 'state.json', state)
             sent_message_id(receipt)
         message_id = sent_message_id(receipts[target_id])
-        readback = lark('im', '+messages-mget', '--message-ids', message_id, '--no-reactions', identity=state['message_identity'])
+        readback = lark('im', '+messages-mget', '--message-ids', message_id, '--no-reactions', identity='user')
         messages = readback['data'].get('messages', [])
         if not any(item.get('message_id') == message_id for item in messages):
             raise RuntimeError('Message receipt could not be read back')
@@ -209,20 +184,12 @@ def process(folder, config, state, deliver_only=False, collect_only=False, prepa
     raw = json.loads((folder / 'raw.json').read_text())
     if (raw['since'], raw['until']) != (state['since'], state['until']):
         raise ValueError('Cached data window differs from this run')
-    if raw.get('accounting_version') != 2 and not delivery_started(state):
-        if deliver_only:
-            raise ValueError('Old unsent report must be recalculated before delivery')
-        provider = GitEvidence(ROOT / '.state/progress-evidence', config.get('report', {}).get('local_git_root'))
-        prior = prior_patches((ROOT / '.state').glob('daily-report*/*/raw.json'), raw['since'])
-        raw = enrich(raw, provider, prior, config.get("report", {}).get("excluded_repos", []))
-        save(folder / 'raw.json', raw)
-        (folder / 'report.md').write_text(render_evidence(raw))
+    if raw.get('accounting_version') != VERSION:
+        raise ValueError('Daily delivery requires current accounting data')
     body_path = folder / 'body.md'
     if body_path.exists():
         try:
             validate_body(body_path.read_text().strip(), raw)
-            if raw.get('accounting_version') == 2 and not delivery_started(state):
-                build_card(body_path.read_text().strip(), raw)
         except ValueError:
             if deliver_only or delivery_started(state):
                 raise
@@ -249,10 +216,9 @@ raw.groups 是分组证据，不是业务事项数量。PR body 和 commit 标�
                  '--ephemeral', '-C', str(ROOT), prompt], timeout=600, log=log)
     if not body_path.exists():
         body_path.write_text(narrative_path.read_text().strip() + '\n')
-    if raw.get('accounting_version') == 2:
-        (folder / 'statistics.md').write_text(statistics_markdown(raw) + '\n')
+    (folder / 'statistics.md').write_text(statistics_markdown(raw) + '\n')
     validate_body(body_path.read_text().strip(), raw)
-    if raw.get('accounting_version') == 2 and not delivery_started(state):
+    if not delivery_started(state):
         save(folder / 'card.json', build_card(body_path.read_text().strip(), raw))
     if not prepare_only:
         deliver(folder, config, state)

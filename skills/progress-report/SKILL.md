@@ -19,7 +19,7 @@ description: Generate a plain-language, decision-oriented engineering progress u
 
 定时入口采用Card 2.0：蓝色标题，日期与截至时间放在标题区，正文分为今日重点、默认展开的成员进展和可选需关注。每位活跃成员写 1–3 条「事项｜状态：数据、进展与下一步」，零活动成员由程序合并一行。程序从 raw.stats 添加个人 PR 状态数；日报不重复统计窗口、历史快照、仓库排除和去重方法等固定说明。细节通过事项 PR 链接追溯。
 
-固定布局由 `scripts/daily_report_card.py` 生成，Agent 只写正文。`--prepare-only` 同时生成 card.json 供核对；失败重试绑定消息格式、身份和内容摘要。升级前已开始投递的 Markdown 日报按原格式恢复，不为换卡片重复发送。飞书文档继续留存可阅读的 Markdown 正文。
+固定布局由 `scripts/daily_report_card.py` 生成，Agent 只写正文。`--prepare-only` 同时生成 card.json 供核对；定时入口只处理当前统计数据并发送卡片；失败重试按内容摘要、发送回执与幂等键恢复。历史重算独立手动运行，输出到新目录，不在定时入口升级旧数据或恢复旧消息格式。飞书文档继续留存可阅读的 Markdown 正文。
 
 ## Prerequisites
 
@@ -318,7 +318,7 @@ lark-cli im +messages-send --user-id "<open_id>" --markdown "$(cat progress_mess
 5. 0 数据时不要编造，输出“该范围内未匹配到团队成员代码改动”，并建议检查仓库配置、GitHub 用户映射或时间范围。
 6. 默认不要创建飞书文档或发送消息；只有用户明确要求或 `output.mode` 指定时才执行外部写入。
 7. 飞书文档创建后必须自动 transfer owner，并重新授权 bot；权限命令必须带 `--yes`。
-8. 飞书文档和群消息使用 bot 身份；定时日报私聊使用 user 身份，升级前已开始发送的运行沿用原身份恢复。
+8. 飞书文档和群消息使用 bot 身份；定时日报私聊使用 user 身份。
 9. 群消息面向团队协作，不面向代码审计；把可追溯证据放进文档或本地报告，不要把第一屏写成提交清单。
 10. 群消息的验收标准是「没读过内部文档的人也能看懂」：默认 200 字上下，零内部行话与编号；发送前先给用户 review 一版，用户确认后再投递。
 11. 所有飞书 Markdown 投递前必须通过 `validate_lark_markdown.py`；PR 范围不得使用 ASCII `~`。

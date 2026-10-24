@@ -76,25 +76,43 @@ class CardTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     report.deliver(folder, config, state)
 
-    def test_previously_prepared_markdown_keeps_original_format_and_identity(self):
-        import hashlib
+
+    def test_ambiguous_card_send_retries_with_same_key_and_payload(self):
+        state = {'date': '2026-10-24', 'marker': 'retry-card', 'archived': True}
         config = {'delivery': {'targets': [{'type': 'user', 'id': 'ou_test'}]},
                   'lark': {'daily_log_doc': {'token': 'doc', 'url': 'https://example.test/doc'}}}
-        fingerprint = hashlib.sha256(json.dumps([self.body, config['lark']['daily_log_doc'],
-                                               config['delivery']['targets']], sort_keys=True).encode()).hexdigest()
-        state = {'date': '2026-10-24', 'marker': 'legacy', 'delivery_fingerprint': fingerprint, 'archived': True}
         mid = 'om_x' + '1' * 31
+        attempts = []
         def api(*args, **kwargs):
-            self.assertEqual(kwargs['identity'], 'bot')
             if args[1] == '+messages-send':
-                self.assertIn('--markdown', args)
-                self.assertNotIn('--content', args)
+                attempts.append(args)
+                if len(attempts) == 1:
+                    raise TimeoutError('send response lost')
                 return {'ok': True, 'data': {'message_id': mid}}
             return {'ok': True, 'data': {'messages': [{'message_id': mid}]}}
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             (folder / 'raw.json').write_text(json.dumps(self.raw))
             (folder / 'body.md').write_text(self.body)
-            with patch.object(report, 'lark', side_effect=api), patch.object(report, 'run'):
+            with patch.object(report, 'lark', side_effect=api), patch.object(report, 'run'), patch.object(report.time, 'time', return_value=100):
+                with self.assertRaises(TimeoutError):
+                    report.deliver(folder, config, state)
+                state = json.loads((folder / 'state.json').read_text())
                 report.deliver(folder, config, state)
-            self.assertEqual(state['message_format'], 'markdown')
+                report.deliver(folder, config, state)
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(attempts[0], attempts[1])
+
+    def test_expired_ambiguous_card_send_is_not_repeated(self):
+        state = {'date': '2026-10-24', 'marker': 'expired-card', 'archived': True,
+                 'send_attempted_at': {'ou_test': 100}}
+        config = {'delivery': {'targets': [{'type': 'user', 'id': 'ou_test'}]},
+                  'lark': {'daily_log_doc': {'token': 'doc', 'url': 'https://example.test/doc'}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / 'raw.json').write_text(json.dumps(self.raw))
+            (folder / 'body.md').write_text(self.body)
+            with patch.object(report, 'lark') as api, patch.object(report, 'run'), patch.object(report.time, 'time', return_value=4000):
+                with self.assertRaisesRegex(RuntimeError, 'idempotency window'):
+                    report.deliver(folder, config, state)
+                api.assert_not_called()

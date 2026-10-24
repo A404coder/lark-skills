@@ -45,46 +45,6 @@ class DeliveryTest(unittest.TestCase):
                 MODULE.sent_message_id(receipt)
         self.assertEqual(MODULE.sent_message_id({'ok': True, 'data': {'message_id': MESSAGE_ID}}), MESSAGE_ID)
 
-    def test_archive_failure_resumes_without_sending_again(self):
-        raw = {'stats': {'active_member_count': 1, 'commit_count': 2, 'active_pr_count': 1,
-                        'by_member': {'dev': {'display_name': 'Dev', 'commit_count': 2, 'active_pr_count': 1}}}}
-        body = '过去 24 小时团队 1 人活跃，共 2 次提交、1 个活跃 PR，主线是测试。\n\n**Dev**（2 提交 / 1 PR）\n完成测试。'
-        cfg = {'delivery': {'targets': [{'type': 'user', 'id': 'ou_test'}]},
-               'lark': {'daily_log_doc': {'token': 'doc', 'url': 'https://example.test/doc'}}}
-        state = {'marker': 'daily-test', 'date': '2026-09-22'}
-        calls = []
-        inserted = False
-        def api(*args, **kwargs):
-            nonlocal inserted
-            calls.append(args)
-            if args[1] == '+messages-send':
-                return {'ok': True, 'data': {'message_id': MESSAGE_ID}}
-            if args[1] == '+messages-mget':
-                return {'ok': True, 'data': {'messages': [{'message_id': MESSAGE_ID}]}}
-            if args[1] == '+fetch':
-                return {'ok': True, 'data': {'document': {'content': '<p>daily-test</p>' if inserted else ''}}}
-            if args[1] == '+update':
-                inserted = True
-                raise TimeoutError('response lost after archive insert')
-            self.fail(args)
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp)
-            (folder / 'raw.json').write_text(json.dumps(raw))
-            (folder / 'body.md').write_text(body)
-            with patch.object(MODULE, 'lark', side_effect=api), patch.object(MODULE, 'run'):
-                with self.assertRaises(TimeoutError):
-                    MODULE.deliver(folder, cfg, state)
-                # Reload persisted state as after a process restart.
-                state = json.loads((folder / 'state.json').read_text())
-                MODULE.deliver(folder, cfg, state)
-                self.assertTrue(state['archived'])
-                self.assertEqual(sum(c[1] == '+messages-send' for c in calls), 1)
-                self.assertEqual(sum(c[1] == '+update' for c in calls), 1)
-                (folder / 'body.md').write_text(body + '\n意外修改')
-                with self.assertRaises(RuntimeError):
-                    MODULE.deliver(folder, cfg, state)
-
-
 class AccountingNarrativeTest(unittest.TestCase):
     def test_prepare_generates_statistics_in_code_without_delivering(self):
         from progress_accounting import enrich
@@ -108,25 +68,10 @@ class AccountingNarrativeTest(unittest.TestCase):
             self.assertNotIn('统计附表', (folder / 'body.md').read_text())
             self.assertIn('统计附表', (folder / 'statistics.md').read_text())
 
-    def test_new_narrative_uses_grouped_work_and_exact_generated_appendix(self):
-        from progress_accounting import statistics_markdown
-        raw = {'accounting_version': 2, 'stats': {'by_member': {
-            'dev': {'display_name': 'Dev', 'categories': {},
-                    'prs': {'opened': 2, 'merged_main': 0, 'merged_branch': 1, 'ongoing': 1},
-                    'observed_commit_count': 3, 'audit_statuses': {'counted': 1, 'merge': 1, 'duplicate': 1}}}}}
-        body = '**Dev**\n测试治理仍在开发分支。\n\n' + statistics_markdown(raw)
-        MODULE.validate_body(body, raw)
-        with self.assertRaises(ValueError):
-            MODULE.validate_body(body.replace('| 2 | 0 | 1 | 0 | 1 |', '| 20 | 0 | 1 | 0 | 1 |'), raw)
-        with self.assertRaises(ValueError):
-            MODULE.validate_body('共 100 次提交\n' + body, raw)
-
-
-
 class AmbiguousArchiveTest(unittest.TestCase):
     def test_partial_insert_with_lost_response_is_not_inserted_again(self):
-        raw = {'stats': {'active_member_count': 0, 'commit_count': 0,
-                        'active_pr_count': 0, 'by_member': {}}}
+        raw = {'accounting_version': 2, 'until': '2026-01-02T13:00:00Z',
+               'stats': {'by_member': {}}}
         config = {'delivery': {'targets': [{'type': 'user', 'id': 'ou_test'}]},
                   'lark': {'daily_log_doc': {'token': 'doc', 'url': 'https://example.test/doc'}}}
         state = {'marker': 'daily-test', 'date': '2026-09-22'}
@@ -149,7 +94,7 @@ class AmbiguousArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             (folder / 'raw.json').write_text(json.dumps(raw))
-            (folder / 'body.md').write_text('过去 24 小时团队 0 人活跃，共 0 次提交、0 个活跃 PR，窗口内无活动。')
+            (folder / 'body.md').write_text('窗口内无活动。')
             with patch.object(MODULE, 'lark', side_effect=api), patch.object(MODULE, 'run'):
                 with self.assertRaises(TimeoutError):
                     MODULE.deliver(folder, config, state)
