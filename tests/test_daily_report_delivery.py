@@ -98,7 +98,7 @@ class AccountingNarrativeTest(unittest.TestCase):
             (folder / 'report.md').write_text('fact sheet')
             def generate(argv, **kwargs):
                 context = json.loads((folder / 'narrative-context.json').read_text())
-                self.assertNotIn('commits', context)
+                self.assertEqual(context['commits'], [])
                 self.assertIn(str(folder / 'narrative-context.json'), argv[-1])
                 (folder / 'narrative.md').write_text('本期无工程活动。\n\n**Dev**\n- 窗口内未采集到代码或 PR 活动。')
             with patch.object(MODULE, 'run', side_effect=generate), patch.object(MODULE, 'lark') as lark:

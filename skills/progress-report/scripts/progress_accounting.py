@@ -248,13 +248,32 @@ def render_evidence(raw):
             lines.append(f"- [{p['repo']} #{p['number']}]({url}) {p['title']}；{state}；目标 {p['base']}")
             if p.get('body'):
                 lines.append(p['body'])
+    lines += ['', '## 提交事实（含未关联 PR 的工作）', '']
+    for c in narrative_commits(raw):
+        audit = c['audit']
+        label = STATUS_LABELS.get(audit.get('status'), '状态未知')
+        title = c.get('title') or c['sha']
+        reference = f"[{title}]({c['url']})" if c.get('url') else title
+        lines.append(f"- {c['member']} · {c['repo']} · {reference}；分支 {c.get('branch', '')}；{label}")
+        if audit.get('files'):
+            lines.append('  文件：' + '、'.join(audit['files']))
     lines += ['', '## 口径', '', *('- ' + n for n in raw['accounting_notes'])]
     return '\n'.join(lines) + '\n'
 
 
+def narrative_commits(raw):
+    """Keep work facts and duplicate provenance without full diffs or identities."""
+    keys = ('repo', 'sha', 'member', 'title', 'branch', 'timestamp', 'url')
+    audit_keys = ('status', 'equivalent_sha', 'authored_at', 'categories', 'files')
+    return [{**{k: c[k] for k in keys if k in c},
+             'audit': {k: c['audit'][k] for k in audit_keys if k in c['audit']}}
+            for c in raw.get('commits', [])]
+
+
 def narrative_context(raw):
-    """Keep immutable patch/file evidence out of the model's normal reading path."""
+    """Provide compact PR and commit facts, including work with no PR."""
     keys = ('repo', 'number', 'title', 'url', 'user', 'base', 'head', 'state',
             'created_at', 'closed_at', 'merged_at', 'draft', 'body', 'body_source')
     return {k: raw[k] for k in ('date_range', 'members', 'stats', 'groups', 'accounting_notes')} | {
-        'prs': [{k: p[k] for k in keys if k in p} for p in raw['prs']]}
+        'prs': [{k: p[k] for k in keys if k in p} for p in raw['prs']],
+        'commits': narrative_commits(raw)}
